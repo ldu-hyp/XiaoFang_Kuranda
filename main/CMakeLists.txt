@@ -1,0 +1,35 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app.c"
+        "display.c"
+        "imu.c"
+        "input.c"
+        "buzzer.c"
+        "storage.c"
+        "power.c"
+        "network.c"
+        "modem.c"
+        "ui.c"
+        "games/game.c"
+        "games/game_snake.c"
+        "games/game_maze.c"
+        "games/game_hourglass.c"
+        "games/game_dice.c"
+        "games/game_bagua.c"
+        "games/game_sokoban.c"
+        "games/game_cube_man.c"
+        "games/game_dodge.c"
+        "games/game_pong.c"
+    INCLUDE_DIRS "." "games"
+    REQUIRES
+        driver
+        esp_adc
+        esp_event
+        esp_netif
+        esp_timer
+        esp_wifi
+        nvs_flash
+    PRIV_REQUIRES
+        led_strip
+)
