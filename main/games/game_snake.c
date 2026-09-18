@@ -6,8 +6,10 @@
 #include "display.h"
 #include "storage.h"
 
+#define SNAKE_MAX_CELLS 64
+
 typedef struct {
-    xf_point_t body[64];
+    xf_point_t body[SNAKE_MAX_CELLS];
     uint8_t length;
     xf_dir_t dir;
     xf_point_t food;
@@ -19,19 +21,45 @@ typedef struct {
 
 static snake_state_t s;
 
-static bool same(xf_point_t a, xf_point_t b) { return a.x == b.x && a.y == b.y; }
+static bool same(xf_point_t a, xf_point_t b)
+{
+    return a.x == b.x && a.y == b.y;
+}
+
+static uint8_t safe_length(void)
+{
+    return s.length <= SNAKE_MAX_CELLS ? s.length : SNAKE_MAX_CELLS;
+}
 
 static bool on_body(xf_point_t p, uint8_t count)
 {
-    for (uint8_t i = 0; i < count; ++i) if (same(p, s.body[i])) return true;
+    if (count > SNAKE_MAX_CELLS) {
+        count = SNAKE_MAX_CELLS;
+    }
+    for (uint8_t i = 0; i < count; ++i) {
+        if (same(p, s.body[i])) {
+            return true;
+        }
+    }
     return false;
 }
 
 static void spawn_food(void)
 {
-    for (int tries = 0; tries < 200; ++tries) {
-        xf_point_t p = { esp_random() % 8, esp_random() % 8 };
-        if (!on_body(p, s.length)) { s.food = p; return; }
+    uint8_t len = safe_length();
+    if (len >= SNAKE_MAX_CELLS) {
+        return;
+    }
+
+    for (int tries = 0; tries < 256; ++tries) {
+        xf_point_t p = {
+            .x = (int16_t)(esp_random() % 8),
+            .y = (int16_t)(esp_random() % 8),
+        };
+        if (!on_body(p, len)) {
+            s.food = p;
+            return;
+        }
     }
 }
 
@@ -39,9 +67,9 @@ static esp_err_t start(void)
 {
     memset(&s, 0, sizeof(s));
     s.length = 3;
-    s.body[0] = (xf_point_t){4,3};
-    s.body[1] = (xf_point_t){4,4};
-    s.body[2] = (xf_point_t){4,5};
+    s.body[0] = (xf_point_t){4, 3};
+    s.body[1] = (xf_point_t){4, 4};
+    s.body[2] = (xf_point_t){4, 5};
     s.dir = XF_DIR_UP;
     s.high = storage_get_high_score(XF_SCORE_SNAKE);
     spawn_food();
@@ -51,10 +79,15 @@ static esp_err_t start(void)
 static xf_point_t next_head(void)
 {
     xf_point_t p = s.body[0];
-    if (s.dir == XF_DIR_UP) --p.y;
-    else if (s.dir == XF_DIR_DOWN) ++p.y;
-    else if (s.dir == XF_DIR_LEFT) --p.x;
-    else if (s.dir == XF_DIR_RIGHT) ++p.x;
+    if (s.dir == XF_DIR_UP) {
+        --p.y;
+    } else if (s.dir == XF_DIR_DOWN) {
+        ++p.y;
+    } else if (s.dir == XF_DIR_LEFT) {
+        --p.x;
+    } else if (s.dir == XF_DIR_RIGHT) {
+        ++p.x;
+    }
     return p;
 }
 
@@ -68,6 +101,13 @@ static bool opposite(xf_dir_t a, xf_dir_t b)
 
 static void step(void)
 {
+    uint8_t old_len = safe_length();
+    if (old_len == 0) {
+        s.over = true;
+        return;
+    }
+    s.length = old_len;
+
     xf_point_t next = next_head();
     bool grow = same(next, s.food);
 
@@ -77,46 +117,65 @@ static void step(void)
     }
 
     /*
-     * Corrected from the Rust rewrite: collision is tested against NEXT head.
-     * If we are not growing, the current tail leaves this tick and may safely
-     * be entered by the new head.
+     * Collision is tested against NEXT head. When the snake is not growing,
+     * the current tail leaves on this tick, so entering that tail cell is legal.
      */
-    uint8_t collision_count = grow ? s.length : (s.length ? s.length - 1 : 0);
+    uint8_t collision_count = grow ? old_len : (uint8_t)(old_len - 1U);
     if (on_body(next, collision_count)) {
         s.over = true;
         return;
     }
 
-    uint8_t end = grow && s.length < 64 ? s.length : s.length - 1;
-    for (int i = end; i > 0; --i) s.body[i] = s.body[i-1];
+    uint8_t last_index;
+    if (grow && old_len < SNAKE_MAX_CELLS) {
+        last_index = old_len;
+    } else {
+        last_index = (uint8_t)(old_len - 1U);
+    }
+
+    for (int i = (int)last_index; i > 0; --i) {
+        s.body[i] = s.body[i - 1];
+    }
     s.body[0] = next;
 
     if (grow) {
-        if (s.length < 64) ++s.length;
-        ++s.score;
-        buzzer_score();
-        spawn_food();
+        if (old_len < SNAKE_MAX_CELLS) {
+            s.length = (uint8_t)(old_len + 1U);
+            ++s.score;
+            buzzer_score();
+            spawn_food();
+        } else {
+            /* 8x8 board completely filled: treat as a completed run. */
+            s.over = true;
+        }
     }
-
-    if (s.over && s.score > s.high) storage_set_high_score(XF_SCORE_SNAKE, s.score);
 }
 
 static void update(const xf_input_t *in, uint32_t dt)
 {
-    if (s.over) return;
+    if (s.over) {
+        return;
+    }
     if (in->dir_changed && in->dir != XF_DIR_NONE && !opposite(in->dir, s.dir)) {
         s.dir = in->dir;
     }
 
     s.elapsed_ms += dt;
     uint32_t interval = 520U;
-    if (s.score < 25) interval -= s.score * 14U;
-    if (interval < 140U) interval = 140U;
+    if (s.score < 25) {
+        interval -= s.score * 14U;
+    }
+    if (interval < 140U) {
+        interval = 140U;
+    }
+
     if (s.elapsed_ms >= interval) {
         s.elapsed_ms = 0;
         step();
         if (s.over) {
-            if (s.score > s.high) storage_set_high_score(XF_SCORE_SNAKE, s.score);
+            if (s.score > s.high) {
+                storage_set_high_score(XF_SCORE_SNAKE, s.score);
+            }
             buzzer_game_over();
         }
     }
@@ -125,14 +184,23 @@ static void update(const xf_input_t *in, uint32_t dt)
 static void render(void)
 {
     display_clear();
-    display_set_pixel(s.food.x, s.food.y, XF_COLOR_RED);
-    for (uint8_t i = 0; i < s.length; ++i) {
-        display_set_pixel(s.body[i].x, s.body[i].y, i == 0 ? XF_COLOR_GREEN : XF_COLOR_WHITE);
+    if (safe_length() < SNAKE_MAX_CELLS) {
+        display_set_pixel(s.food.x, s.food.y, XF_COLOR_RED);
     }
+
+    uint8_t len = safe_length();
+    for (uint8_t i = 0; i < len; ++i) {
+        display_set_pixel(
+            s.body[i].x,
+            s.body[i].y,
+            i == 0 ? XF_COLOR_GREEN : XF_COLOR_WHITE
+        );
+    }
+
     if (s.over) {
-        for (int i=0;i<8;++i) {
-            display_set_pixel(i,i,XF_COLOR_RED);
-            display_set_pixel(7-i,i,XF_COLOR_RED);
+        for (int i = 0; i < 8; ++i) {
+            display_set_pixel(i, i, XF_COLOR_RED);
+            display_set_pixel(7 - i, i, XF_COLOR_RED);
         }
     }
 }
@@ -143,8 +211,12 @@ static void stop(void) {}
 const game_module_t *game_snake_module(void)
 {
     static const game_module_t m = {
-        .name="snake", .start=start, .update=update, .render=render,
-        .finished=finished, .stop=stop
+        .name = "snake",
+        .start = start,
+        .update = update,
+        .render = render,
+        .finished = finished,
+        .stop = stop,
     };
     return &m;
 }
