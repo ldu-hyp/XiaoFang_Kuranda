@@ -60,15 +60,14 @@ static void update(const xf_input_t *in,uint32_t dt)
     if(s.elapsed_ms<interval)return;
     s.elapsed_ms=0;
 
-    /* Platforms scroll upward. */
     for(int y=0;y<7;++y){s.mask[y]=s.mask[y+1];s.type[y]=s.type[y+1];}
     make_floor(7);
 
     int below=s.player.y+1;
-    bool supported=below<8 && (s.mask[below]&(1U<<s.player.x));
+    bool supported=below>=0 && below<8 && (s.mask[below]&(1U<<s.player.x));
     if(supported){
         floor_type_t t=s.type[below];
-        --s.player.y; /* platform carries player upward */
+        --s.player.y;
         ++s.score;
         if((s.score%10)==0)buzzer_score();
 
