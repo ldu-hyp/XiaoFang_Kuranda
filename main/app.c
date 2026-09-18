@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "buzzer.h"
@@ -139,7 +140,8 @@ void app_run(void)
             }
         }
 
-        if (in.face_down && s_state != APP_GAME) {
+        /* Preserve original behavior: face-down sleeps outside the menu. */
+        if (in.face_down && s_state != APP_MENU) {
             power_enter_deep_sleep();
         }
         if (power_should_sleep()) {
