@@ -1,6 +1,8 @@
 #include "modem.h"
 
+#include <stdbool.h>
 #include "driver/uart.h"
+#include "freertos/FreeRTOS.h"
 #include "xf_config.h"
 
 static bool s_ready;
