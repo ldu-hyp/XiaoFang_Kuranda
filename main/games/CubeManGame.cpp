@@ -32,7 +32,7 @@ public:
             return;
         }
 
-        if (input.dir_changed) {
+        if (input.dir_pressed || input.dir_repeat) {
             if (input.dir == XF_DIR_LEFT && player_.x > 0) {
                 --player_.x;
             } else if (input.dir == XF_DIR_RIGHT && player_.x < 7) {

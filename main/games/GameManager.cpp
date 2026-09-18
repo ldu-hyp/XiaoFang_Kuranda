@@ -32,6 +32,7 @@ esp_err_t GameManager::start(GameId id)
     active_id_ = id;
     const esp_err_t err = active_->start();
     if (err != ESP_OK) {
+        active_->stop();
         active_ = nullptr;
         active_id_ = GameId::Count;
     }
@@ -54,7 +55,14 @@ void GameManager::render() const
 
 bool GameManager::finished() const
 {
-    return active_ == nullptr || active_->finished();
+    return result() != GameResult::Running;
+}
+
+GameResult GameManager::result() const
+{
+    return active_ != nullptr
+        ? active_->result()
+        : GameResult::Failure;
 }
 
 void GameManager::stop()

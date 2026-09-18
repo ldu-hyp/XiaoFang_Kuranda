@@ -53,7 +53,7 @@ public:
 
     void update(const xf_input_t &input, uint32_t) override
     {
-        if (done_ || !input.dir_changed || input.dir == XF_DIR_NONE) {
+        if (done_ || !input.dir_pressed || input.dir == XF_DIR_NONE) {
             return;
         }
 
@@ -130,6 +130,10 @@ public:
     }
 
     bool finished() const override { return done_; }
+    GameResult result() const override
+    {
+        return done_ ? GameResult::Success : GameResult::Running;
+    }
 
 private:
     static bool inside(int x, int y)

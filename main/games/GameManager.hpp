@@ -10,6 +10,7 @@ public:
     void update(const xf_input_t &input, uint32_t dt_ms);
     void render() const;
     bool finished() const;
+    GameResult result() const;
     void stop();
 
     GameId activeId() const { return active_id_; }

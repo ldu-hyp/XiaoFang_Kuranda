@@ -18,6 +18,7 @@ public:
 
         const esp_err_t err = network_init();
         if (err != ESP_OK) {
+            result_ = GameResult::Failure;
             return err;
         }
 
@@ -29,11 +30,11 @@ public:
 
     void update(const xf_input_t &input, uint32_t dt_ms) override
     {
-        if (over_) {
+        if (result_ != GameResult::Running) {
             return;
         }
 
-        if (input.dir_changed) {
+        if (input.dir_pressed || input.dir_repeat) {
             if (input.dir == XF_DIR_UP && my_paddle_ > 0) {
                 --my_paddle_;
             } else if (input.dir == XF_DIR_DOWN && my_paddle_ < 6) {
@@ -58,18 +59,24 @@ public:
                 if (seek_ms_ >= 200U) {
                     seek_ms_ = 0;
                     const uint8_t seek[2] = {kProtocolCode, kSeek};
-                    network_broadcast(seek, sizeof(seek));
+                    (void)network_broadcast(seek, sizeof(seek));
+                }
+            } else if (role_ == Role::Client) {
+                join_retry_ms_ += dt_ms;
+                if (join_retry_ms_ >= 250U) {
+                    join_retry_ms_ = 0;
+                    sendJoin();
                 }
             }
 
             if ((now - started_us_) > 8'000'000) {
-                over_ = true;
+                finish(GameResult::Timeout);
             }
             return;
         }
 
         if ((now - last_rx_us_) > 1'000'000) {
-            over_ = true;
+            finish(GameResult::Disconnected);
             return;
         }
 
@@ -81,7 +88,7 @@ public:
 
         if (role_ == Role::Host) {
             simulateHost();
-            if (!over_) {
+            if (result_ == GameResult::Running) {
                 sendState();
             }
         } else {
@@ -94,7 +101,8 @@ public:
         display_clear();
 
         if (!paired_) {
-            const uint32_t phase = static_cast<uint32_t>((esp_timer_get_time() / 120000) % 6);
+            const uint32_t phase =
+                static_cast<uint32_t>((esp_timer_get_time() / 120000) % 6);
             display_set_pixel(0, 3, XF_COLOR_WHITE);
             display_set_pixel(0, 4, XF_COLOR_WHITE);
             display_set_pixel(7, 3, XF_COLOR_WHITE);
@@ -108,7 +116,7 @@ public:
 
         /*
          * Network coordinates are always Host-world coordinates.
-         * Client mirrors X so each player still sees themselves on the left.
+         * Client mirrors X so each player sees themselves on the left.
          */
         if (role_ == Role::Client) {
             ball_x = 7 - ball_x;
@@ -124,13 +132,19 @@ public:
         }
     }
 
-    bool finished() const override { return over_; }
+    bool finished() const override
+    {
+        return result_ != GameResult::Running;
+    }
+
+    GameResult result() const override
+    {
+        return result_;
+    }
 
     void stop() override
     {
-        if (network_is_ready()) {
-            network_shutdown();
-        }
+        network_shutdown();
     }
 
 private:
@@ -145,6 +159,7 @@ private:
     static constexpr uint8_t kSeek = 1;
     static constexpr uint8_t kJoin = 2;
     static constexpr uint8_t kGame = 3;
+    static constexpr uint8_t kStart = 4;
 
     static bool sameMac(const uint8_t *a, const std::array<uint8_t, 6> &b)
     {
@@ -166,24 +181,49 @@ private:
         peer_score_ = 0;
         elapsed_ms_ = 0;
         seek_ms_ = 0;
+        join_retry_ms_ = 0;
         started_us_ = 0;
         last_rx_us_ = 0;
         paired_ = false;
-        over_ = false;
+        result_ = GameResult::Running;
+    }
+
+    void finish(GameResult result)
+    {
+        if (result_ != GameResult::Running) {
+            return;
+        }
+
+        result_ = result;
+
+        const uint16_t high = storage_get_high_score(XF_SCORE_PONG);
+        if (my_score_ > high) {
+            (void)storage_set_high_score(XF_SCORE_PONG, my_score_);
+        }
     }
 
     void serve()
     {
         ball_x8_ = 28;
         ball_y8_ = 28;
-        vx8_ = static_cast<int8_t>(((esp_random() & 1U) != 0U ? 1 : -1) * 2);
-        vy8_ = static_cast<int8_t>((esp_random() & 1U) != 0U ? 1 : -1);
+        vx8_ = static_cast<int8_t>(
+            ((esp_random() & 1U) != 0U ? 1 : -1) * 2
+        );
+        vy8_ = static_cast<int8_t>(
+            (esp_random() & 1U) != 0U ? 1 : -1
+        );
     }
 
     void sendJoin()
     {
         const uint8_t payload[2] = {kProtocolCode, kJoin};
-        network_send(peer_.data(), payload, sizeof(payload));
+        (void)network_send(peer_.data(), payload, sizeof(payload));
+    }
+
+    void sendStart()
+    {
+        const uint8_t payload[2] = {kProtocolCode, kStart};
+        (void)network_send(peer_.data(), payload, sizeof(payload));
     }
 
     void sendState()
@@ -198,13 +238,38 @@ private:
             my_score_,
             peer_score_,
         };
-        network_send(peer_.data(), payload, sizeof(payload));
+        (void)network_send(peer_.data(), payload, sizeof(payload));
     }
 
     void sendPaddle()
     {
-        const uint8_t payload[3] = {kProtocolCode, kGame, my_paddle_};
-        network_send(peer_.data(), payload, sizeof(payload));
+        const uint8_t payload[3] = {
+            kProtocolCode,
+            kGame,
+            my_paddle_
+        };
+        (void)network_send(peer_.data(), payload, sizeof(payload));
+    }
+
+    void processClientState(const xf_net_packet_t &packet)
+    {
+        if (packet.len < 8) {
+            return;
+        }
+
+        peer_paddle_ = packet.data[2];
+        ball_x8_ = static_cast<int16_t>(packet.data[4] * 8);
+        ball_y8_ = static_cast<int16_t>(packet.data[5] * 8);
+        peer_score_ = packet.data[6];
+        my_score_ = packet.data[7];
+
+        if (my_score_ >= 5 || peer_score_ >= 5) {
+            finish(
+                my_score_ >= 5
+                    ? GameResult::Success
+                    : GameResult::Failure
+            );
+        }
     }
 
     void handlePacket(const xf_net_packet_t &packet)
@@ -215,56 +280,105 @@ private:
             return;
         }
 
-        if (!paired_ && packet.data[1] == kSeek) {
+        const uint8_t type = packet.data[1];
+        const int64_t now = esp_timer_get_time();
+
+        /*
+         * Discovery tie-break: if both units become Host, the unit with the
+         * lexicographically larger MAC yields and becomes Client.
+         */
+        if (!paired_ && type == kSeek) {
             if (role_ == Role::Unknown ||
                 (role_ == Role::Host &&
-                 std::memcmp(self_mac_.data(), packet.src, self_mac_.size()) > 0)) {
+                 std::memcmp(
+                     self_mac_.data(),
+                     packet.src,
+                     self_mac_.size()) > 0)) {
                 role_ = Role::Client;
                 std::memcpy(peer_.data(), packet.src, peer_.size());
+                last_rx_us_ = now;
+                join_retry_ms_ = 0;
                 sendJoin();
-                paired_ = true;
-                last_rx_us_ = esp_timer_get_time();
-                buzzer_menu_enter();
             }
             return;
         }
 
-        if (!paired_ && packet.data[1] == kJoin && role_ == Role::Host) {
-            std::memcpy(peer_.data(), packet.src, peer_.size());
-            paired_ = true;
-            last_rx_us_ = esp_timer_get_time();
-            serve();
+        /*
+         * Host treats repeated JOIN as an ACK retry request. This makes a lost
+         * START packet recoverable: Client keeps sending JOIN until START/state
+         * is received.
+         */
+        if (role_ == Role::Host && type == kJoin) {
+            if (!paired_) {
+                std::memcpy(peer_.data(), packet.src, peer_.size());
+                paired_ = true;
+                serve();
+                buzzer_menu_enter();
+            } else if (!sameMac(packet.src, peer_)) {
+                return;
+            }
+
+            last_rx_us_ = now;
+            sendStart();
             sendState();
-            buzzer_menu_enter();
             return;
+        }
+
+        if (role_ == Role::Client &&
+            !paired_ &&
+            sameMac(packet.src, peer_)) {
+            if (type == kStart) {
+                paired_ = true;
+                last_rx_us_ = now;
+                buzzer_menu_enter();
+                return;
+            }
+
+            /*
+             * A valid Host state also acts as an implicit START ACK. This
+             * covers the case where START is lost but the following state is not.
+             */
+            if (type == kGame && packet.len >= 8) {
+                paired_ = true;
+                last_rx_us_ = now;
+                buzzer_menu_enter();
+                processClientState(packet);
+                return;
+            }
         }
 
         if (!paired_ || !sameMac(packet.src, peer_)) {
             return;
         }
 
-        last_rx_us_ = esp_timer_get_time();
+        last_rx_us_ = now;
 
-        if (packet.data[1] == kEnd) {
-            over_ = true;
+        if (type == kEnd) {
+            if (packet.len >= 4) {
+                if (role_ == Role::Client) {
+                    peer_score_ = packet.data[2];
+                    my_score_ = packet.data[3];
+                } else {
+                    my_score_ = packet.data[2];
+                    peer_score_ = packet.data[3];
+                }
+            }
+            finish(
+                my_score_ >= peer_score_
+                    ? GameResult::Success
+                    : GameResult::Failure
+            );
             return;
         }
-        if (packet.data[1] != kGame) {
+
+        if (type != kGame) {
             return;
         }
 
         if (role_ == Role::Host && packet.len >= 3) {
             peer_paddle_ = packet.data[2];
-        } else if (role_ == Role::Client && packet.len >= 8) {
-            peer_paddle_ = packet.data[2];
-            ball_x8_ = static_cast<int16_t>(packet.data[4] * 8);
-            ball_y8_ = static_cast<int16_t>(packet.data[5] * 8);
-            peer_score_ = packet.data[6];
-            my_score_ = packet.data[7];
-
-            if (my_score_ >= 5 || peer_score_ >= 5) {
-                over_ = true;
-            }
+        } else if (role_ == Role::Client) {
+            processClientState(packet);
         }
     }
 
@@ -308,14 +422,19 @@ private:
         }
 
         if (my_score_ >= 5 || peer_score_ >= 5) {
-            const uint8_t payload[4] = {kProtocolCode, kEnd, my_score_, peer_score_};
-            network_send(peer_.data(), payload, sizeof(payload));
-            over_ = true;
+            const uint8_t payload[4] = {
+                kProtocolCode,
+                kEnd,
+                my_score_,
+                peer_score_
+            };
+            (void)network_send(peer_.data(), payload, sizeof(payload));
 
-            const uint16_t high = storage_get_high_score(XF_SCORE_PONG);
-            if (my_score_ > high) {
-                storage_set_high_score(XF_SCORE_PONG, my_score_);
-            }
+            finish(
+                my_score_ >= 5
+                    ? GameResult::Success
+                    : GameResult::Failure
+            );
         }
     }
 
@@ -332,10 +451,11 @@ private:
     uint8_t peer_score_{0};
     uint32_t elapsed_ms_{0};
     uint32_t seek_ms_{0};
+    uint32_t join_retry_ms_{0};
     int64_t started_us_{0};
     int64_t last_rx_us_{0};
     bool paired_{false};
-    bool over_{false};
+    GameResult result_{GameResult::Running};
 };
 
 PongGame g_game;

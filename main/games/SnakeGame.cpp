@@ -32,7 +32,7 @@ public:
             return;
         }
 
-        if (input.dir_changed && input.dir != XF_DIR_NONE && !opposite(input.dir, dir_)) {
+        if (input.dir_pressed && input.dir != XF_DIR_NONE && !opposite(input.dir, dir_)) {
             dir_ = input.dir;
         }
 

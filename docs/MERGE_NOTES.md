@@ -1,62 +1,38 @@
 # 两个 xiaofang 版本的合并取舍
 
-## 当前正式技术路线
+## 当前正式路线
 
-从 v0.2 开始：
-
-- MCU：ESP32-S3-WROOM-1
+- MCU：**ESP32-WROOM-32D**
 - SDK：ESP-IDF
-- 底层：C
+- 底层驱动：C
 - Application / UI / Game：轻量 C++
-- C++ 禁用 exception / RTTI
-- 应用游戏层无动态分配
+- C++ 禁用 exception / RTTI，游戏层无 `new/delete`
+- CI：`target=esp32`
 
-## 从 cwm-peace/xiaofang 保留
+## 已保留的核心能力
 
-- 小方的整体交互范式；
-- 沙漏真实堆积的体验；
-- 温度、声音、睡眠/动作唤醒思路。
+- 原版的重力交互、沙漏、温度/声音、睡眠与动作唤醒思路；
+- RGB 显示、随机迷宫、推箱子、下一百层、躲避方块和 ESP-NOW Pong；
+- NVS 持久化、WS2812 RMT 驱动和模块化 Game 架构。
 
-不再保留：
+## 已修复 / 改进
 
-- ATmega328P 专用 LowPower；
-- MAX7219 / LedControl；
-- AT24C16 地图；
-- 大型 .ino + 阻塞 while(flag)。
+- Snake 使用 next-head 自撞判断；
+- Dodge 障碍方向修正；
+- Hourglass 粒子在下半部真实保留；
+- Maze 使用 DFS + BFS 最远终点；
+- 输入层增加 `dir_pressed / dir_repeat / dir_released`；
+- 持续倾斜、角速度和加速度变化可刷新 inactivity timer；
+- Maze / CubeMan / Dodge / Pong 支持保持倾斜自动重复；
+- GameResult 区分 Success / Failure / Timeout / Disconnected；
+- 蜂鸣器改为独立 FreeRTOS Sound Task，不阻塞游戏循环；
+- ESP-NOW 初始化失败完整回滚；
+- Pong 增加 JOIN 重发与 START/状态确认，消除假配对窗口；
+- Deep Sleep 前验证 MPU6050 Motion Interrupt 与 GPIO33 电平；
+- 4G UART2 预留 RTS/CTS。
 
-## 从 LittleGuest/xiaofang 保留
+## 暂缓
 
-- RGB 显示思路；
-- 模块化游戏；
-- 随机迷宫；
-- 推箱子、下一百层、躲避方块；
-- ESP-NOW Pong。
-
-不直接翻译 Rust/Embassy，而是重新实现成 ESP-IDF 架构。
-
-## 修复/改进
-
-- 贪吃蛇碰撞检测检查 next-head；
-- 非增长时允许蛇头进入即将离开的尾格；
-- 躲避方块真正从顶部向下移动；
-- 沙漏粒子落下后保留在下半部；
-- 迷宫使用 DFS 生成、BFS 选择最远终点；
-- 迷宫 BFS/DFS 工作缓冲改为对象静态存储，避免在任务栈上放数 KB 临时数组；
-- Pong 统一 Host 世界坐标，Client 渲染镜像；
-- 持久化统一使用 NVS；
-- 真正 Deep Sleep + MPU6050 Motion Interrupt；
-- 4G UART 预留 RTS/CTS，便于后续 PPP/高吞吐数据链路。
-
-## 暂缓功能
-
-### 音乐频谱
-
-GPIO5 已预留 ADC1 麦克风。加入麦克风后使用固定采样率 ADC continuous/DMA + FFT，不采用不定采样周期的 oneshot 循环。
-
-### 电池 / 充电
-
-GPIO4 已预留 ADC1。待充电管理芯片和电阻分压确定后加入。
-
-### 4G 协议
-
-硬件传输层已经准备好，但不猜测具体模组 AT 指令和开关机时序。
+- 音乐频谱：GPIO35 预留 ADC1，后续使用固定采样率 ADC continuous/DMA + FFT。
+- 电池/充电：GPIO34 预留 ADC1，等待实际分压与电源管理方案。
+- 4G 协议：等待具体模组后实现型号层。

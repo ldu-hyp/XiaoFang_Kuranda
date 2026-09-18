@@ -20,7 +20,7 @@ public:
 
     void update(const xf_input_t &input, uint32_t) override
     {
-        if (!input.dir_changed || input.dir == XF_DIR_NONE) {
+        if (!(input.dir_pressed || input.dir_repeat) || input.dir == XF_DIR_NONE) {
             return;
         }
 

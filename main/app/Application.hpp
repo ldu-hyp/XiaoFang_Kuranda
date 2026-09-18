@@ -17,17 +17,20 @@ private:
     enum class State : uint8_t {
         Menu,
         Game,
+        GameResult,
         Temperature,
     };
 
     static bool menuToGame(ui::Item item, GameId &id);
     void enterMenu();
     void handleMenu(const xf_input_t &input);
+    void beginGameResult(GameResult result);
 
     State state_{State::Menu};
     ui::Item menu_{ui::Item::Hourglass};
     xf_settings_t settings_{};
     int64_t temperature_until_us_{0};
+    int64_t result_until_us_{0};
     GameManager games_{};
 };
 

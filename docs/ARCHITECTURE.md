@@ -1,73 +1,39 @@
 # Software Architecture
 
-## 目标
-
-固件采用 **ESP-IDF + C/C++ 混合架构**。
-
-原则：
-
-1. 硬件和系统资源的拥有者用 C；
-2. 产品状态机和多游戏对象用 C++；
-3. 禁止应用层动态分配；
-4. 禁用 C++ exceptions / RTTI；
-5. 所有游戏通过统一接口，不直接操作 I2C、RMT、NVS；
-6. 所有硬件 C API 通过 `c_api.hpp` 暴露给 C++。
-
-## 分层
+固件采用 **ESP32-WROOM-32D + ESP-IDF + C/C++ 混合架构**。
 
 ```text
 Application (C++)
-    |
-    +-- UI (C++)
-    |
-    +-- GameManager (C++)
-    |      |
-    |      +-- Game abstract interface
-    |             |
-    |             +-- SnakeGame
-    |             +-- MazeGame
-    |             +-- HourglassGame
-    |             +-- ...
-    |
-    +-- c_api.hpp
-           |
-           +-- display.c
-           +-- imu.c
-           +-- input.c
-           +-- buzzer.c
-           +-- storage.c
-           +-- network.c
-           +-- power.c
-           +-- modem.c
+    ├── UI (C++)
+    ├── GameManager (C++)
+    │    └── Game / GameResult
+    └── c_api.hpp
+         ├── display.c
+         ├── imu.c / input.c
+         ├── buzzer.c
+         ├── storage.c
+         ├── network.c / modem.c
+         └── power.c
 ```
 
-## 为什么没有使用纯 C++
+底层资源所有者保持 C；状态机和游戏对象使用 C++。游戏不直接操作 I2C、RMT、NVS 或 Wi-Fi。
 
-ESP-IDF 的底层 API 本身主要为 C API。驱动层保持 C 能让：
+## 输入模型
 
-- 中断/任务资源所有权清晰；
-- 无隐藏构造顺序；
-- 可独立复用与测试；
-- 与 ESP-IDF 示例和第三方模组 SDK 更直接兼容。
+`input.c` 输出 `dir_pressed / dir_repeat / dir_released`、shake、pause、face_down 和 activity。实时移动游戏可使用自动重复；Sokoban 保持一步一动作。
 
-## 为什么上层使用 C++
+## 游戏结果
 
-九个以上游戏如果继续使用 C 函数表，会不断重复手工状态管理。C++ 的抽象基类让每个游戏天然拥有自己的状态和生命周期：
-
-```cpp
-class Game {
-public:
-    virtual esp_err_t start() = 0;
-    virtual void update(const xf_input_t&, uint32_t dt) = 0;
-    virtual void render() const = 0;
-    virtual bool finished() const = 0;
-};
-```
-
-所有游戏对象都是静态实例，不调用 `new/delete`。
+`GameResult` 支持 Running、Success、Failure、Timeout、Disconnected。Application 根据结果选择不同反馈。
 
 ## 实时策略
 
-当前 8×8 游戏循环以 50ms 为基础 tick。WS2812 由 RMT 外设发送；应用层不 bit-bang。ESP-NOW 通过队列把回调数据交给游戏逻辑，不在无线回调里运行游戏。
+- 基础 tick：50ms。
+- WS2812：RMT。
+- ESP-NOW：回调只入队。
+- 蜂鸣器：独立 FreeRTOS Sound Task。
+- Pong：Host 权威球物理，Client 发送 paddle。
 
-未来 4G 建议使用独立 FreeRTOS task 处理 AT/PPP 收发，再通过队列或 event group 与 Application 通信。
+## Deep Sleep
+
+休眠前必须成功配置 MPU6050 Motion Interrupt、清中断、确认 GPIO33 为低并启用 EXT0；失败则取消休眠。

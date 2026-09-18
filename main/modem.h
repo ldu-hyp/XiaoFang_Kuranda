@@ -6,9 +6,8 @@
 #include "esp_err.h"
 
 /*
- * Future 4G modem transport.
- * UART2 GPIO16/17 is dedicated to this layer.
- * Optional RTS/CTS uses GPIO14/15.
+ * Future 4G modem transport for ESP32-WROOM-32D.
+ * UART2 uses GPIO16/17. Optional RTS/CTS uses GPIO13/14.
  * PWRKEY/DTR/RI remain model-specific and are intentionally not driven here.
  */
 esp_err_t modem_uart_init(int baud, bool hardware_flow_control);

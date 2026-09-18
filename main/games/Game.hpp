@@ -19,6 +19,14 @@ enum class GameId : uint8_t {
     Count,
 };
 
+enum class GameResult : uint8_t {
+    Running = 0,
+    Success,
+    Failure,
+    Timeout,
+    Disconnected,
+};
+
 class Game {
 public:
     virtual ~Game() = default;
@@ -28,6 +36,12 @@ public:
     virtual void update(const xf_input_t &input, uint32_t dt_ms) = 0;
     virtual void render() const = 0;
     virtual bool finished() const = 0;
+
+    virtual GameResult result() const
+    {
+        return finished() ? GameResult::Failure : GameResult::Running;
+    }
+
     virtual void stop() {}
 };
 

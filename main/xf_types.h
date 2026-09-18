@@ -24,7 +24,15 @@ typedef enum {
 
 typedef struct {
     xf_dir_t dir;
+
+    /* Compatibility edge flag: true whenever the classified direction changes. */
     bool dir_changed;
+
+    /* Key-like direction events for deterministic game controls. */
+    bool dir_pressed;
+    bool dir_repeat;
+    bool dir_released;
+
     bool shake;
     bool pause;
     bool face_down;
