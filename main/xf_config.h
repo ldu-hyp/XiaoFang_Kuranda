@@ -2,6 +2,9 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "driver/ledc.h"
+#include "driver/i2c_types.h"
+#include "esp_check.h"
 
 /*
  * XiaoFang_Kuranda hardware allocation
