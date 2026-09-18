@@ -1,41 +1,42 @@
-# 硬件资源规划
+# XiaoFang_Kuranda 硬件规划
 
-## 固定分配
+## 1. MCU
 
-| 子系统 | 引脚 | 理由 |
-|---|---|---|
-| WS2812B | GPIO18 | 普通高速输出，远离启动脚；RMT 输出 |
-| MPU6050 I2C | GPIO21/22 | ESP32 常用 I2C 引脚，布线直观 |
-| MPU6050 INT | GPIO33 | RTC GPIO，可 EXT0 Deep Sleep 唤醒 |
-| 压电蜂鸣器 | GPIO25 | LEDC PWM；RTC GPIO但本项目不拿它唤醒 |
-| 4G UART2 | RX16/TX17 | ESP32-WROOM-32D 模块引出 U2RXD/U2TXD |
-| 4G DTR/PWRKEY/RI | 26/27/32 | 为后续低功耗、开关机和来电/数据指示预留 |
-| Battery ADC | GPIO34 | ADC1 输入专用脚，不与 Wi-Fi/ESP-NOW 的 ADC2 资源冲突 |
-| Microphone ADC | GPIO35 | 同为 ADC1，未来频谱功能使用 |
+正式目标改为 **ESP32-S3-WROOM-1**。
 
-## 不使用/慎用
+固件本身不依赖 PSRAM，因此 N8、N8R2、N8R8 等模块配置可以按 PCB 成本与未来扩展选择。为了兼容更多带 PSRAM 的 S3 模块，本项目主动避开 GPIO26–37 作为外设 IO。
 
-- GPIO6–11：ESP32-WROOM-32D 内部 SPI Flash。
-- GPIO1/3：UART0，保留下载与日志。
-- GPIO0/2/5/12/15：涉及启动绑带或启动阶段电平，当前设计避免挂关键外设。
-- GPIO34–39：输入专用；34/35 正好用于模拟输入。
+## 2. GPIO 分配
 
-## 4G 模块接口边界
+| 子系统 | GPIO | 说明 |
+|---|---:|---|
+| WS2812B DIN | 18 | RMT 输出 |
+| MPU6050 SDA | 8 | I2C0 |
+| MPU6050 SCL | 9 | I2C0 |
+| MPU6050 INT | 7 | RTC GPIO，Deep Sleep EXT0 唤醒 |
+| 压电蜂鸣器 | 10 | LEDC PWM |
+| 4G RX | 16 | UART2 |
+| 4G TX | 17 | UART2 |
+| 4G DTR | 11 | 预留 |
+| 4G PWRKEY | 12 | 预留 |
+| 4G RI | 13 | 预留 |
+| 4G RTS | 14 | 可选硬件流控 |
+| 4G CTS | 15 | 可选硬件流控 |
+| Battery ADC | 4 | ADC1 预留 |
+| Microphone ADC | 5 | ADC1 预留 |
+| USB D- | 19 | ESP32-S3 原生 USB |
+| USB D+ | 20 | ESP32-S3 原生 USB |
 
-当前只实现 `modem.c` UART 传输层，不假设具体模块型号，因此没有写死：
+## 3. 特意不占用的 GPIO
 
-- PWRKEY 有效电平和保持时间；
-- DTR 休眠语义；
-- RI 有效电平；
-- AT 指令集；
-- 波特率；
-- SIM/网络注册流程。
+- GPIO19 / 20：原生 USB D- / D+。
+- GPIO0 / 3 / 45 / 46：启动绑带相关，避免挂关键负载。
+- GPIO26–37：为了兼容可能内部使用这些信号的 Flash/PSRAM 配置。
+- GPIO43 / 44：保留 UART0 调试/救援下载选择。
 
-确定具体 4G 模块（例如 SIM7600、EC200、Air780 等）后，应在 `components/modem_driver` 或现有 `modem.c` 上增加型号层，而不要改变 UART2 GPIO16/17。
+## 4. WS2812B
 
-## WS2812B
-
-逻辑矩阵坐标以左上角为 (0,0)，物理灯带按行 Z 型：
+8×8 Z 型排列：
 
 ```text
 row0:  0  1  2  3  4  5  6  7
@@ -44,15 +45,64 @@ row2: 16 17 18 19 20 21 22 23
 ...
 ```
 
-`display.c` 唯一负责逻辑坐标到物理 index 的转换。
+推荐电路：
 
-标准 5V WS2812B 建议：
-- 74AHCT125/74AHCT1G125 电平转换；
+- 5V LED 电源；
+- ESP32-S3 与灯板共地；
+- 74AHCT125 / 74AHCT1G125：3.3V → 5V 数据电平；
 - DIN 串 220–470Ω；
-- 5V/GND 入口 470–1000µF；
-- 大电流走线与 ESP32 数字地合理汇流；
-- 必须共地。
+- LED 电源入口放 470–1000µF 电容；
+- 5V 大电流回路不要经过 ESP32 的细地线。
 
-## 低功耗
+软件 `display.c` 还实现了帧级电流预算，默认限制到约 800mA，但它不能替代正确的电源设计。
 
-MPU6050 INT 接 GPIO33，休眠前切到 Motion Interrupt，ESP32 使用 EXT0 高电平唤醒。Deep Sleep 后 CPU/大部分 RAM/数字外设掉电，因此固件按“重新启动 + NVS/RTC 恢复”的模型设计，而不是假设函数原地继续执行。
+## 5. MPU6050
+
+MPU6050：
+
+- SDA GPIO8；
+- SCL GPIO9；
+- INT GPIO7。
+
+休眠前 MPU6050 切换 Motion Interrupt；GPIO7 作为 EXT0 唤醒源。最终阈值需要依据 PCB 中 MPU6050 的实际朝向、安装方式和外壳机械振动进行真机校准。
+
+## 6. USB-C
+
+ESP32-S3 GPIO19/GPIO20 直接提供原生 USB D-/D+。
+
+PCB 应按 Espressif S3 硬件设计建议：
+
+- D-/D+ 差分布线；
+- 预留 22/33Ω 串联电阻；
+- USB-C 设备端 CC1/CC2 使用合适的 Rd；
+- ESD 防护靠近接口放置。
+
+这样可以直接使用 USB Serial/JTAG 进行下载、日志和调试，不再强制需要 CH340/CP2102。
+
+## 7. 4G 模块
+
+UART2 固定：
+
+```text
+ESP32-S3 GPIO17 TX  -> MODEM RX
+ESP32-S3 GPIO16 RX  <- MODEM TX
+GPIO14 RTS
+GPIO15 CTS
+GPIO11 DTR
+GPIO12 PWRKEY
+GPIO13 RI
+```
+
+`modem_uart_init(baud, hardware_flow_control)` 可以按具体模块决定是否启用 RTS/CTS。
+
+目前不锁定 SIM7600 / EC200 / Air780 等型号，因此 PWRKEY 脉冲宽度、DTR 休眠极性、RI 行为和 AT/PPP 流程都留给模块专用驱动。
+
+### 4G 电源尤其重要
+
+蜂窝模块的瞬时峰值电流通常远高于 ESP32，PCB 上应给 4G 电源独立规划足够的稳压能力、低 ESR 储能电容和回流路径。不能简单从 ESP32 的 3.3V LDO 分支给 4G 模块供电。
+
+## 8. 模拟输入
+
+Battery ADC 与未来麦克风均放在 ADC1 侧，避免无线工作时使用 ADC2 所带来的资源限制。
+
+当前固件只做引脚预留；在充电管理芯片、电池分压和麦克风前端确定后再启用对应模块。
